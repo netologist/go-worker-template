@@ -1,21 +1,20 @@
 # Developer User Guide
 
-This guide provides end-to-end instructions for developing, operating, testing, debugging, and deploying the **Go Service Template** microservice architecture (Hexagonal Architecture, OpenAPI spec-first code generation, PostgreSQL persistence with UUIDv7, hermetic `mise` toolchains, and zero-trust CI/CD standards).
+This guide provides end-to-end instructions for developing, operating, testing, debugging, and deploying the **Go Worker Template** background worker architecture (Hexagonal Architecture, pluggable message listeners, PostgreSQL persistence with UUIDv7, hermetic `mise` toolchains, and zero-trust CI/CD standards).
 
 ---
 
 ## 1. Architecture & Core Capabilities
 
-The service follows strict architectural boundaries designed for high maintainability, testability, and operational resilience:
+The worker follows strict architectural boundaries designed for high maintainability, testability, and operational resilience:
 
-- **Hexagonal Architecture (Ports & Adapters):** Core business logic (`internal/domain`) and application use cases (`internal/usecase`) are completely decoupled from external frameworks and database drivers. The HTTP API (`internal/adapter/httpapi`) and PostgreSQL storage (`internal/adapter/postgres`) operate as pluggable adapters.
-- **Spec-First API Contract:** The single source of truth for the HTTP API is `api/openapi.yaml`. Strict typed router interfaces, models, request validators, and client SDKs are generated automatically via `oapi-codegen`.
-- **Zero-Ceremony Model Mapping (ADR-0005):** Redundant intermediate use case DTOs are eliminated. Use cases accept domain primitives and return `domain.Item` values directly. Handlers map directly between OpenAPI contracts and domain entities.
+- **Hexagonal Architecture (Ports & Adapters):** Core business logic (`internal/domain`) and application use cases (`internal/usecase`) are completely decoupled from external message brokers and database drivers. Message listeners (`internal/adapter/consumer`), probe servers (`internal/adapter/probe`), and PostgreSQL storage (`internal/adapter/postgres`) operate as pluggable adapters.
+- **Pluggable Message Listeners:** Unified `MessageListener` interface supporting PostgreSQL Transactional Outbox (SKIP LOCKED), RabbitMQ (AMQP 0-9-1), and Redpanda / Apache Kafka (`franz-go`) with automatic panic recovery.
+- **Atomic Idempotency Deduplication:** Outbound `IdempotencyStore` guarantees exact-once execution semantics across distributed consumers.
+- **Poison Pill & DLQ Routing:** Differentiates transient errors (`ErrTransient` $\to$ NACK / exponential retry) from fatal errors / poison pills (`ErrFatal` $\to$ Dead Letter Queue).
 - **Type-Safe Persistence (ADR-0003):** Compile-time SQL query validation with `sqlc`, version-controlled migrations with `goose`, high-performance connection pooling with `pgx/v5`, and native B-Tree-friendly `UUIDv7` primary keys.
-- **Hermetic Toolchain (ADR-0001):** All development CLI tools (`air`, `goose`, `sqlc`, `oapi-codegen`, `mockery`, `golangci-lint`, `gotestsum`, `gitleaks`, `govulncheck`, `lefthook`) are pinned directly inside `go.mod` via Go's native `tool` directive and executed hermetically through `mise`.
-- **RFC 9457 Problem Details:** All API errors return standard `application/problem+json` payloads containing unique, traceable `request_id` values.
+- **Hermetic Toolchain (ADR-0001):** All development CLI tools (`air`, `goose`, `sqlc`, `mockery`, `golangci-lint`, `gotestsum`, `gitleaks`, `govulncheck`, `lefthook`) are pinned directly inside `go.mod` via Go's native `tool` directive and executed hermetically through `mise`.
 - **Dual-Loop Local Development (ADR-0006):** Decoupled workflows provide fast live-reloading via `Air` (`mise run dev`) and interactive step debugging via native `Delve` inside VS Code (`F5`).
-
 ---
 
 ## 2. Prerequisites & Environment Setup
@@ -24,7 +23,7 @@ To run and develop this project, you only need two tools installed on your host 
 
 | Tool | Minimum Version | Responsibility |
 | :--- | :--- | :--- |
-| **[Mise](https://mise.jdx.dev/)** | Latest | Manages Go runtime (`1.27.2`), Protobuf tooling (`buf`), gRPC CLI (`grpcurl`), and task orchestration. |
+| **[Mise](https://mise.jdx.dev/)** | Latest | Manages Go runtime (`1.27.2`) and task orchestration. |
 | **[Docker & Docker Compose](https://docs.docker.com/get-docker/)** | v2.20+ | Runs local PostgreSQL database and containerized suites. |
 
 > **Note:** You do **not** need to install Go CLI utilities globally (`go install ...`). Every tool is version-pinned in `go.mod` (callable via `go tool <tool>`) and CLI tools (`buf`, `grpcurl`) are managed directly through `mise`.
@@ -53,38 +52,34 @@ Get the complete service running locally with a PostgreSQL database in 4 steps:
 # Step 1: Create local environment configuration from template
 cp .env.example .env
 
-# Step 2: Start PostgreSQL container (waits until healthy)
+# Step 2: Start PostgreSQL, RabbitMQ, and Redpanda containers
 mise run docker:compose-up
 
 # Step 3: Apply database schema migrations
 mise run migrate:up
 
-# Step 4: Run HTTP server
-go run ./cmd/server
+# Step 4: Run worker process
+go run ./cmd/worker
 ```
 
-The HTTP server starts listening on `http://localhost:8080`.
+The worker starts consuming tasks and exposes lightweight probes on `http://localhost:8081`.
 
 ### Smoke Verification
 
-In a new terminal window, verify the service endpoints:
+In a new terminal window, verify the health and readiness probes:
 
 ```bash
-# 1. Health and readiness check
-curl -i http://localhost:8080/healthz
+# 1. Liveness check
+curl -i http://localhost:8081/livez
 
 # Expected Response: HTTP/1.1 200 OK
-# {"status":"ok","timestamp":"2026-10-10T..."}
+# {"status":"alive"}
 
-# 2. Register a new item
-curl -i -X POST http://localhost:8080/api/v1/items \
-  -H "Content-Type: application/json" \
-  -d '{"name": "Mechanical Keyboard", "description": "Hot-swappable custom keyboard", "price": 14900}'
+# 2. Readiness check
+curl -i http://localhost:8081/readyz
 
-# Expected Response: HTTP/1.1 201 Created
-
-# 3. List all registered items
-curl -i http://localhost:8080/api/v1/items
+# Expected Response: HTTP/1.1 200 OK
+# {"status":"ready"}
 ```
 
 ---
@@ -97,21 +92,29 @@ Below is the complete reference of environment variables defined in `.env.exampl
 
 | Environment Variable | Type / Format | Default | Description & Constraints |
 | :--- | :--- | :--- | :--- |
-| `APP_ENV` | `string` | `development` | Target environment (`development`, `staging`, `production`, `test`). In `production`, Swagger UI (`/docs/`) and `/openapi.json` are disabled. |
-| `HTTP_PORT` | `int` | `8080` | Port for the HTTP server (`1`–`65535`). |
+| `APP_ENV` | `string` | `development` | Target environment (`development`, `staging`, `production`, `test`). |
 | `LOG_LEVEL` | `string` | `info` | Structured logging level (`debug`, `info`, `warn`, `error`). |
-| `DATABASE_URL` | `string` | *(Required)* | PostgreSQL connection URI. Example: `postgres://postgres:S3cr3tP455w0rD@localhost:5432/service_db?sslmode=disable` |
-| `CORS_ALLOWED_ORIGINS` | `csv` | Empty | Comma-separated list of allowed origins (e.g., `https://app.example.com,http://localhost:3000`). Wildcards (`*`) are rejected. If empty, CORS is disabled. |
-| `SERVER_SHUTDOWN_TIMEOUT` | `duration` | `10s` | Maximum time allowed for in-flight requests to complete during shutdown. |
-| `SERVER_DRAIN_TIMEOUT` | `duration` | `5s` | Drain wait duration after flipping readiness probe to allow ingress/K8s endpoints to update. |
-| `SERVER_READ_HEADER_TIMEOUT`| `duration` | `30s` | Timeout for reading HTTP request headers (mitigates Slowloris attacks). |
-| `SERVER_READ_TIMEOUT` | `duration` | `30s` | Timeout for reading the entire request body. |
-| `SERVER_WRITE_TIMEOUT` | `duration` | `30s` | Timeout for writing the HTTP response. |
-| `SERVER_IDLE_TIMEOUT` | `duration` | `2m` | Keep-alive idle connection timeout. |
-| `DB_MAX_CONNS` | `int32` | `25` | Maximum number of active connections in the `pgxpool`. |
-| `DB_MIN_CONNS` | `int32` | `2` | Minimum number of idle connections maintained in the pool. |
-| `DB_MAX_CONN_LIFETIME` | `duration` | `30m` | Maximum lifetime of a database connection before retirement. |
-| `DB_MAX_CONN_IDLE_TIME` | `duration` | `5m` | Maximum idle time before closing an unused database connection. |
+| `BROKER_KIND` | `string` | `postgres_outbox` | Inbound consumer type (`postgres_outbox`, `rabbitmq`, `redpanda`, `kafka`). |
+| `CONSUMER_GROUP` | `string` | `default-worker-group` | Consumer group identifier for message queues. |
+| `WORKER_CONCURRENCY` | `int` | `10` | Number of concurrent worker goroutines. |
+| `BATCH_SIZE` | `int` | `10` | Maximum messages pulled per batch. |
+| `POLL_INTERVAL` | `duration` | `1s` | Polling frequency for outbox worker. |
+| `PROCESSING_TIMEOUT` | `duration` | `30s` | Maximum execution time per task before timeout context cancellation. |
+| `MAX_RETRIES` | `int` | `3` | Maximum retry attempts for transient errors before DLQ routing. |
+| `DLQ_QUEUE_NAME` | `string` | `tasks_dlq` | Destination dead letter queue or topic name. |
+| `IDEMPOTENCY_TTL` | `duration` | `168h` | Time-to-live for processed message deduplication records. |
+| `RABBITMQ_URL` | `string` | `amqp://guest:guest@localhost:5672/` | RabbitMQ connection URI. |
+| `RABBITMQ_QUEUE` | `string` | `tasks_queue` | Target RabbitMQ queue. |
+| `RABBITMQ_PREFETCH_COUNT` | `int` | `20` | RabbitMQ channel prefetch count. |
+| `KAFKA_BROKERS` | `string` | `localhost:9092` | Kafka / Redpanda broker endpoints. |
+| `KAFKA_TOPICS` | `string` | `tasks` | Target Kafka topic(s). |
+| `PROBE_PORT` | `int` | `8081` | Port for the health and readiness HTTP server (`1`–`65535`). |
+| `SHUTDOWN_TIMEOUT` | `duration` | `30s` | Maximum time allowed to drain in-flight worker goroutines during shutdown. |
+| `DATABASE_URL` | `string` | *(Required)* | PostgreSQL connection URI. |
+| `DB_MAX_CONNS` | `int32` | `25` | Maximum active database connections in `pgxpool`. |
+| `DB_MIN_CONNS` | `int32` | `2` | Minimum idle database connections maintained in `pgxpool`. |
+| `DB_MAX_CONN_LIFETIME` | `duration` | `30m` | Maximum lifetime of a database connection. |
+| `DB_MAX_CONN_IDLE_TIME` | `duration` | `5m` | Maximum idle time before closing an unused connection. |
 | `DB_HEALTH_CHECK_PERIOD`| `duration` | `1m` | Frequency of background pool health checks. |
 | `DB_PING_TIMEOUT` | `duration` | `5s` | Timeout for pinging PostgreSQL during startup and health check probes. |
 
@@ -154,47 +157,41 @@ This single command automatically:
 
 For step-through debugging with breakpoints, call stack inspection, and variable inspection:
 
-1. If `mise run dev` is running, **stop it** to avoid port `:8080` collisions.
-2. Ensure PostgreSQL is running: `mise run docker:compose-up`.
+1. If `mise run dev` is running, **stop it** to avoid port `:8081` collisions.
+2. Ensure dependencies are running: `mise run docker:compose-up`.
 3. Open VS Code and switch to the **Run and Debug** view (`Ctrl+Shift+D` / `Cmd+Shift+D`).
-4. Select **Debug Server (cmd/server)** and press **F5**.
-5. Set breakpoints in handlers, use cases, or domain files. Send an HTTP request to trigger the debugger.
+4. Select **Debug Worker (cmd/worker)** and press **F5**.
+5. Set breakpoints in consumers, use cases, or domain files.
 
 To debug a single test package, place your cursor in the target test file, select **Debug Current Test** in VS Code, and press **F5**.
 
 ---
 
-## 6. Code Generation & Spec-First Workflow
+## 6. Code Generation & Persistence Workflow
 
-All HTTP routing interfaces, models, client SDKs, SQL queries, and test mocks are generated from authoritative source files:
+All SQL queries and test mocks are generated from authoritative source files:
 
 ```mermaid
 graph LR
-    API["api/openapi.yaml"] -->|mise run generate:oapi| OpenAPIGen["internal/gen/openapi/api.gen.go"]
-    API -->|mise run generate:client| ClientGen["pkg/client/client.gen.go"]
-    SQL["database/queries/"] -->|mise run generate:sqlc| SQLCGen["internal/gen/sqlc/"]
-    Interfaces["internal/.../*.go"] -->|mise run generate:mocks| MocksGen["internal/gen/mocks/"]
+    SQL["database/queries/*.sql"] -->|mise run generate:sqlc| SQLCGen["internal/gen/sqlc/"]
+    Interfaces["internal/domain/ports.go"] -->|mise run generate:mocks| MocksGen["internal/gen/mocks/domain/"]
 ```
 
 ### Generator Commands
 
 | Command | Description |
 | :--- | :--- |
-| `mise run generate` | Executes all generators in dependency order (OpenAPI Server, Client SDK, SQLC, Mockery). |
-| `mise run generate:proto` | Compiles `api/proto/item/v1/item.proto` into `pkg/proto/item/v1/` using Buf CLI. |
-| `mise run generate:oapi` | Compiles `api/openapi.yaml` into strict Chi server interfaces and request/response models. |
-| `mise run generate:client` | Compiles `api/openapi.yaml` into a production-ready Go HTTP Client SDK under `pkg/client`. |
+| `mise run generate` | Executes all code generators in dependency order (SQLC, Mockery). |
 | `mise run generate:sqlc` | Compiles SQL queries in `database/queries/*.sql` into type-safe Go persistence methods. |
-| `mise run generate:mocks` | Generates interface test mocks into `internal/gen/mocks/` via Mockery. |
+| `mise run generate:mocks` | Generates interface test mocks into `internal/gen/mocks/domain/` via Mockery. |
 | `mise run mocks:check` | Verifies in CI that generated mocks are up to date without unstaged drift. |
 
-### Adding a New API Endpoint
+### Adding a New Task or Query
 
-1. Edit `api/openapi.yaml` to define the new path, parameters, request bodies, and responses (including RFC 9457 errors).
-2. Run `mise run generate:oapi` and `mise run generate:client`.
-3. Implement the newly generated `StrictServerInterface` method in `internal/adapter/httpapi/handler/`.
-4. Implement corresponding business logic in `internal/usecase` and `internal/domain`.
-5. Run `mise run generate:mocks && mise run lint && mise run test` to verify.
+1. Define task domain logic, errors, and invariants in `internal/domain/`.
+2. Add required queries in `database/queries/` and run `mise run generate:sqlc`.
+3. Update use cases in `internal/usecase/process_task.go`.
+4. Run `mise run generate:mocks && mise run lint && mise run test` to verify.
 
 ---
 
@@ -242,176 +239,46 @@ All database tables use **UUIDv7** primary keys:
 
 ---
 
-## 8. API Reference & RFC 9457 Problem Details
+## 8. Health Probes & Monitoring
 
-### 1. System & Diagnostic Endpoints
+The worker exposes isolated HTTP health check endpoints on port `:8081`:
 
-- **Liveness & Readiness Probe:**
-  - `GET /healthz` $\to$ Returns `200 OK` when the service is healthy and the database is reachable. Returns `503 Service Unavailable` if database connectivity is lost or the service is shutting down.
-- **Interactive Swagger UI:**
-  - `GET http://localhost:8080/docs/`
-  - Self-contained Swagger UI embedded directly inside the binary (no external CDN dependencies). Only accessible in `development` and `staging` environments.
-- **Raw OpenAPI Specification:**
-  - `GET http://localhost:8080/openapi.json`
-
-### 2. Items API Endpoints
-
-#### Create Item (`POST /api/v1/items`)
-
+### Liveness Probe (`GET /livez`)
+Returns `200 OK` as long as the worker process is running:
 ```bash
-curl -X POST http://localhost:8080/api/v1/items \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "Noise Cancelling Headphones",
-    "description": "Wireless over-ear headphones",
-    "price": 29900
-  }'
+curl -i http://localhost:8081/livez
 ```
 
-**Success Response (HTTP 201 Created):**
-```json
-{
-  "id": "019464e8-8f5b-7b0a-9d2a-4a6c8e312f10",
-  "name": "Noise Cancelling Headphones",
-  "description": "Wireless over-ear headphones",
-  "price": 29900,
-  "created_at": "2026-10-10T21:17:28.765Z",
-  "updated_at": "2026-10-10T21:17:28.765Z"
-}
-```
-
-#### List & Filter Items (`GET /api/v1/items`)
-
+### Readiness Probe (`GET /readyz`)
+Returns `200 OK` when the database connection pool is healthy and reachable:
 ```bash
-# List all items
-curl http://localhost:8080/api/v1/items
-
-# Filter items by name
-curl "http://localhost:8080/api/v1/items?name=Headphones"
+curl -i http://localhost:8081/readyz
 ```
-
-### 3. RFC 9457 Problem Details
-
-All error responses return the standard `application/problem+json` media type:
-
-#### Validation Error (HTTP 400 Bad Request)
-```json
-{
-  "type": "about:blank",
-  "title": "Bad Request",
-  "status": 400,
-  "detail": "request body validation failed",
-  "instance": "/api/v1/items",
-  "code": "VALIDATION_ERROR",
-  "request_id": "c1f7b889-1234-4567-89ab-cdef01234567",
-  "errors": [
-    {
-      "name": "name",
-      "reason": "must be at least 2 characters long"
-    }
-  ]
-}
-```
-
-#### Conflict Error (HTTP 409 Conflict)
-Attempting to create an item with an existing unique name:
-```json
-{
-  "type": "about:blank",
-  "title": "Conflict",
-  "status": 409,
-  "detail": "item with the specified name already exists",
-  "instance": "/api/v1/items",
-  "code": "ITEM_ALREADY_EXISTS",
-  "request_id": "d2e8c990-2345-6789-01bc-def012345678"
-}
-```
-
-
-### 4. gRPC API & grpcurl Reference
-
-The gRPC server runs on port `:50051` with Server Reflection and `grpc.health.v1` enabled. You can interact with it using `grpcurl` (installed via Mise) or via Go tool directives (`go tool grpcurl`):
-
-```bash
-# 1. List all available services via reflection
-grpcurl -plaintext localhost:50051 list
-# Output:
-# grpc.health.v1.Health
-# grpc.reflection.v1.ServerReflection
-# grpc.reflection.v1alpha.ServerReflection
-# item.v1.ItemService
-
-# 2. Inspect ItemService schema and RPC definitions
-grpcurl -plaintext localhost:50051 describe item.v1.ItemService
-
-# 3. Check server health status
-grpcurl -plaintext localhost:50051 grpc.health.v1.Health/Check
-
-# 4. Register a new item via gRPC
-grpcurl -plaintext -d '{
-  "name": "Mechanical Keyboard",
-  "description": "Ergonomic hot-swappable keyboard",
-  "price": 9900
-}' localhost:50051 item.v1.ItemService/CreateItem
-
-# 5. Query items via gRPC
-grpcurl -plaintext -d '{"name": "Keyboard"}' localhost:50051 item.v1.ItemService/FindItems
-```
+If database connectivity is lost or during graceful shutdown draining, `/readyz` returns `503 Service Unavailable`.
 
 ---
 
-## 9. Go Client SDK Usage (`pkg/client`)
+## 9. Inbound Consumers & Asynchronous Processing
 
-External Go services can consume this API using the generated typed SDK:
+### Consumer Modes (`BROKER_KIND`)
 
-```go
-package main
+1. **PostgreSQL Outbox (`postgres_outbox`)**:
+   - Polls unprocessed messages using `FOR UPDATE SKIP LOCKED`.
+   - Guarantees transactional consistency with business data.
 
-import (
-	"context"
-	"fmt"
-	"log"
-	"time"
+2. **RabbitMQ (`rabbitmq`)**:
+   - Connects via AMQP 0-9-1 using `RABBITMQ_URL` and `RABBITMQ_QUEUE`.
+   - Uses explicit manual ACKs on completion and NACKs on transient failure.
 
-	"github.com/netologist/go-worker-template/pkg/client"
-)
+3. **Redpanda / Apache Kafka (`kafka` / `redpanda`)**:
+   - Uses pure Go `franz-go` consumer group reading from `KAFKA_TOPICS`.
+   - Commits partition offsets upon successful task processing.
 
-func main() {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+### Idempotency & Error Handling
 
-	// 1. Initialize client
-	c, err := client.NewClientWithResponses("http://localhost:8080")
-	if err != nil {
-		log.Fatalf("failed to initialize client: %v", err)
-	}
-
-	// 2. Health check
-	healthResp, err := c.GetHealthWithResponse(ctx)
-	if err != nil || healthResp.StatusCode() != 200 {
-		log.Fatalf("service is unhealthy: %v", err)
-	}
-
-	// 3. Create a new item
-	desc := "Ergonomic mechanical keyboard"
-	createResp, err := c.CreateItemWithResponse(ctx, client.CreateItemJSONRequestBody{
-		Name:        "Ergonomic Keyboard",
-		Description: &desc,
-		Price:       19900,
-	})
-	if err != nil {
-		log.Fatalf("request failed: %v", err)
-	}
-
-	if createResp.JSON201 != nil {
-		fmt.Printf("Created item ID: %s, Name: %s\n", createResp.JSON201.Id, createResp.JSON201.Name)
-	} else if createResp.JSON409 != nil {
-		fmt.Printf("Item already exists: %s\n", *createResp.JSON409.Detail)
-	}
-}
-```
-
----
+- **Deduplication**: `ProcessTaskUseCase` invokes `IdempotencyStore.TryAcquire(ctx, messageID)`. If already processed, the message is safely acknowledged without duplicate side effects.
+- **Transient Errors**: If a task fails with `domain.ErrTransient`, the consumer retries with backoff up to `MAX_RETRIES`.
+- **Poison Pills**: Malformed or unrecoverable tasks (`domain.ErrFatal`) are routed to `DeadLetterPublisher` and acknowledged to prevent head-of-line blocking.
 
 ## 10. Testing & Quality Assurance
 
@@ -471,7 +338,7 @@ Production containers use a minimal, multi-stage `scratch` image to minimize att
 mise run docker:build
 
 # Run production container locally
-docker run --rm -p 8080:8080 \
+docker run --rm -p 8081:8081 \
   -e APP_ENV=production \
   -e DATABASE_URL="postgres://user:pass@host:5432/dbname?sslmode=require" \
   go-worker-template:latest
@@ -480,11 +347,10 @@ docker run --rm -p 8080:8080 \
 ### Graceful Shutdown Lifecycle
 
 Upon receiving `SIGINT` or `SIGTERM`:
-1. The readiness probe (`/healthz`) flips to unhealthy (`503 Service Unavailable`).
-2. The server waits `SERVER_DRAIN_TIMEOUT` (default `5s`) for ingress controllers to remove the instance from routing pools.
-3. In-flight requests are allowed up to `SERVER_SHUTDOWN_TIMEOUT` (default `10s`) to complete.
-4. The database connection pool is closed cleanly before process termination.
-
+1. The readiness probe (`/readyz`) flips to unhealthy (`503 Service Unavailable`).
+2. The message listener halts accepting new incoming messages.
+3. In-flight worker goroutines are allowed up to `SHUTDOWN_TIMEOUT` (default `30s`) to complete.
+4. Database connection pool and message broker clients are closed cleanly before termination.
 ---
 
 ## 12. Adopting the Template for a New Service
@@ -492,7 +358,7 @@ Upon receiving `SIGINT` or `SIGTERM`:
 To instantiate and rename this template for a new business domain:
 
 ```bash
-mise run template:init github.com/your-org/your-service
+mise run template:init github.com/your-org/your-worker
 ```
 
 This task automatically:
@@ -506,12 +372,12 @@ This task automatically:
 
 ## 13. Troubleshooting & FAQ
 
-### 1. `bind: address already in use` (Port :8080 or :5432 is occupied)
-- **Cause:** A stale Air process, Delve debug session, or host PostgreSQL instance is holding the port.
+### 1. `bind: address already in use` (Port :8081 or :5432 is occupied)
+- **Cause:** A stale worker process, Air instance, Delve session, or host database is holding the port.
 - **Resolution:**
   ```bash
-  # Identify and terminate process holding port 8080
-  lsof -i :8080
+  # Identify and terminate process holding probe port 8081
+  lsof -i :8081
   kill -9 <PID>
 
   # Check containers listening on port 5432
@@ -528,7 +394,7 @@ This task automatically:
   mise run docker:compose-up
   ```
 
-### 3. `relation "items" does not exist`
+### 3. `relation "tasks" does not exist`
 - **Cause:** PostgreSQL container is active but database migrations have not been applied.
 - **Resolution:**
   ```bash
@@ -549,17 +415,15 @@ This task automatically:
 
 | Category | Command | Description |
 | :--- | :--- | :--- |
-| **Execution** | `mise run dev` | Starts PostgreSQL, applies migrations, and launches server with Air live-reload |
-| | `go run ./cmd/server` | Starts HTTP server directly |
-| **Database** | `mise run docker:compose-up` | Starts local PostgreSQL container |
-| | `mise run docker:compose-down` | Stops and removes local PostgreSQL container and volumes |
+| **Execution** | `mise run dev` | Starts dependencies, applies migrations, and launches worker with Air live-reload |
+| | `go run ./cmd/worker` | Starts worker directly |
+| **Database** | `mise run docker:compose-up` | Starts local PostgreSQL, RabbitMQ, and Redpanda containers |
+| | `mise run docker:compose-down` | Stops and removes local containers and volumes |
 | | `mise run migrate:up` | Applies pending schema migrations |
 | | `mise run migrate:down` | Rolls back the latest schema migration |
 | | `mise run migrate:status` | Displays migration status |
 | | `mise run psql` | Connects directly to PostgreSQL CLI |
-| **Code Generation** | `mise run generate` | Runs all code generators (OpenAPI server, Client SDK, SQLC, Mocks) |
-| | `mise run generate:oapi` | Generates HTTP router interfaces and models |
-| | `mise run generate:client` | Generates Go client SDK |
+| **Code Generation** | `mise run generate` | Runs all code generators (SQLC, Mocks) |
 | | `mise run generate:sqlc` | Generates type-safe SQL persistence code |
 | | `mise run generate:mocks` | Generates interface mocks via Mockery |
 | **Testing & Quality**| `mise run test` | Runs unit, client, and architecture tests with `-race` |

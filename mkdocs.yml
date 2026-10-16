@@ -1,5 +1,5 @@
-site_name: Go Service Template
-site_description: Production-grade Go Microservice Template with Hexagonal Architecture
+site_name: Go Worker Template
+site_description: Production-grade Go Background Worker and Event Processor Template with Hexagonal Architecture
 site_author: Netologist
 repo_name: netologist/go-worker-template
 repo_url: https://github.com/netologist/go-worker-template
@@ -74,7 +74,6 @@ nav:
       - CI/CD & Security: pipeline.md
   - Adoption Guide: template-guide.md
   - User Guide: user-guide.md
-  - API Reference & Swagger: api.md
   - Architecture Decisions (ADRs):
       - ADR-0001 Development Environment: decisions/0001-development-environment.md
       - ADR-0002 OpenAPI Spec-First: decisions/0002-openapi-spec-first-architecture.md
@@ -85,3 +84,4 @@ nav:
       - ADR-0007 gRPC Dual-Protocol: decisions/0007-grpc-support-and-dual-protocol-architecture.md
   - Technical Debts:
       - TD-0001 CI Cache Poisoning: techdebts/0001-ci-cache-poisoning.md
+      - TD-0002 Telemetry & Tracing: techdebts/0002-telemetry-metrics-tracing-setup.md

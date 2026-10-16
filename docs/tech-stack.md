@@ -9,12 +9,8 @@ This document outlines the technologies, libraries, and developer tools chosen f
 | Category | Technology | Version | Purpose / Role |
 | :--- | :--- | :--- | :--- |
 | **Language & Runtime** | [Go](https://go.dev/) | 1.27+ | Strongly-typed, garbage-collected systems language |
-| **HTTP Router** | [Chi](https://github.com/go-chi/chi) | v5.3 | Lightweight, standard-library compliant HTTP routing |
-| **API Contract** | [OpenAPI 3.0](https://spec.openapis.org/oas/v3.0.3) | 3.0.3 | Spec-first single source of truth for REST interfaces |
-| **Code Generation** | [oapi-codegen](https://github.com/oapi-codegen/oapi-codegen) | v2 | Type-safe server handlers & schemas from OpenAPI |
-| **RPC Framework** | [gRPC](https://grpc.io/) | v1.83 | High-performance, binary RPC protocol with HTTP/2 transport |
-| **Protobuf Tooling** | [Buf CLI](https://buf.build/) | v1.50 | Hermetic Protobuf linter, breaking change detector & code generator |
-| **gRPC CLI Client** | [grpcurl](https://github.com/fullstorydev/grpcurl) | v1.9 | Command-line tool for interacting with and probing gRPC servers |
+| **Concurrency** | [x/sync/errgroup](https://pkg.go.dev/golang.org/x/sync/errgroup) | v0.23 | Structured worker pool concurrency and cancellation |
+| **Health Probes** | Standard `net/http` | Go Stdlib | Isolated HTTP server (:8081) for /livez and /readyz |
 | **Message Brokers** | [RabbitMQ](https://www.rabbitmq.com/) / [Redpanda](https://redpanda.com/) (Kafka) | Latest | Asynchronous message queues and event streaming |
 | **Kafka Client** | [franz-go](https://github.com/twmb/franz-go) | v1.22 | Pure Go, high-performance Kafka & Redpanda client (zero CGo) |
 | **Database Engine** | [PostgreSQL](https://www.postgresql.org/) | 16+ | Relational data persistence |
@@ -41,17 +37,15 @@ This document outlines the technologies, libraries, and developer tools chosen f
 
 ## 2. Technology Choices & Detailed Rationale
 
-### 2.1. HTTP Layer: Chi (v5) vs. Gin / Fiber
-- **Standard Library Compliance**: Chi router implements standard `http.Handler` and `http.HandlerFunc`. It introduces no custom context abstractions, allowing seamless interoperability with the entire Go standard library ecosystem.
-- **Zero Reflection Overhead**: Chi performs pure radix-tree path matching with minimal memory allocation.
-- **Spec-First Compatibility**: `oapi-codegen` natively produces Chi-compatible router adapters (`HandlerWithOptions`).
-- **Why not Gin or Fiber?**: Gin relies on custom context wrappers (`*gin.Context`), making middleware reuse with standard libraries clunky. Fiber relies on `fasthttp`, which deviates from standard `net/http` patterns and HTTP/2 semantics.
+### 2.1. Message Ingestion: Pluggable Consumers (Outbox, RabbitMQ, Kafka)
+- **Multi-Protocol Flexibility**: Inbound adapters implement a simple, unified `MessageListener` interface (`Listen(ctx, handler) error`).
+- **Transactional Outbox**: Supports polling PostgreSQL outbox tables using `FOR UPDATE SKIP LOCKED` for reliable event-driven transactions without dual-write risks.
+- **Broker Drivers**: Native RabbitMQ via `amqp091-go` and Kafka / Redpanda via pure Go `franz-go` (zero CGo, high throughput).
+- **Panic Recovery**: Inbound listener pipelines automatically catch and log panics, preventing individual corrupted payloads from terminating the worker process.
 
-### 2.2. API Contract: Spec-First (oapi-codegen) vs. Code-First (Swaggo)
-- **Single Source of Truth**: The OpenAPI 3.0 specification (`api/openapi.yaml`) is the master contract agreed upon before code is written.
-- **Strict Server Interfaces**: Handlers are forced to implement strongly-typed interfaces generated from the spec (`StrictServerInterface`). Handlers cannot return invalid status codes or unexpected payloads.
-- **Why not Code-First (Swaggo comments)?**: Comment-based doc generation drifts easily from real handler logic, produces fragile annotations, and lacks strict request/response compile-time enforcement.
-
+### 2.2. Error Classification & DLQ: Transient vs. Fatal
+- **Transient Errors (`ErrTransient`)**: Temporary failures (database timeouts, rate limits) trigger message rejection/nack for broker retry with exponential backoff.
+- **Fatal Errors / Poison Pills (`ErrFatal`)**: Malformed payloads, schema mismatches, and unrecoverable errors are routed immediately to the Dead Letter Queue (`DeadLetterPublisher`) to prevent queue blockage.
 ### 2.3. Persistence: sqlc + pgx/v5 vs. ORMs (GORM, Ent)
 - **Raw SQL Control**: Developers write pure, idiomatic PostgreSQL queries in `database/queries/*.sql`. `sqlc` parses and compiles SQL into type-safe, idiomatic Go structs and methods.
 - **Compile-Time Validation**: Query syntax, parameter types, and column references are verified at build time.

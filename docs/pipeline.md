@@ -10,7 +10,7 @@ The CI pipeline is designed around **Zero-Trust**, **Least Privilege**, and **Sh
 
 1. **Default Read-Only Permissions**: The workflow sets `permissions: contents: read` globally. Elevated privileges (e.g. `packages: write`, `id-token: write`) are granted strictly to specific jobs that require them.
 2. **Concurrency Control**: Running jobs on the same branch/PR are automatically cancelled when a new commit arrives (`concurrency.cancel-in-progress: true`), saving GitHub Actions runner minutes.
-3. **Drift-Free Code Generation**: Ensures that OpenAPI contracts, SQL queries, and test mocks committed to Git are 100% in sync with their source definitions.
+3. **Drift-Free Code Generation**: Ensures that SQL queries and test mocks committed to Git are 100% in sync with their source definitions.
 4. **Supply Chain Integrity**: Every published production image is built from `scratch`, scanned rootlessly for vulnerabilities via Trivy, signed keylessly via Cosign with OIDC, and attested with SLSA v1 provenance.
 
 ---
@@ -20,7 +20,6 @@ The CI pipeline is designed around **Zero-Trust**, **Least Privilege**, and **Sh
 ```mermaid
 graph TD
     Trigger([Push to main / PR / Tag]) --> Audit[workflow-audit: actionlint & zizmor]
-    Trigger --> Spec[validate-spec: oapi-codegen drift]
     Trigger --> Mocks[validate-mocks: mockery drift]
     Trigger --> SQLC[validate-sqlc: sqlc drift]
     Trigger --> Sec[security: gitleaks & govulncheck]
@@ -28,8 +27,7 @@ graph TD
     Trigger --> Test[test: gotestsum with -race & coverage]
     Trigger --> Arch[architecture: Hexagonal boundary tests]
 
-    Audit --> Build[build-api: Multi-stage Docker Build]
-    Spec --> Build
+    Audit --> Build[build-worker: Multi-stage Docker Build]
     Mocks --> Build
     SQLC --> Build
     Sec --> Build
@@ -53,13 +51,12 @@ graph TD
   - `actionlint`: Static checker for GitHub Actions workflow files (verifies expressions, runner types, and context usage).
   - `zizmor`: Security auditor for GitHub Actions, detecting overly permissive tokens, script injection vulnerabilities, and untrusted checkouts.
 
-### 3.2. Generator Drift Checks (`validate-spec`, `validate-mocks`, `validate-sqlc`)
+### 3.2. Generator Drift Checks (`validate-mocks`, `validate-sqlc`)
 - **Goal**: Guarantee that generated Go code is never committed out-of-date.
 - **Mechanism**:
-  1. The runner executes the respective code generator (`oapi-codegen`, `mockery`, `sqlc generate`).
+  1. The runner executes the respective code generator (`mockery`, `sqlc generate`).
   2. Runs `git diff --exit-code <path>`.
   3. If changes are detected, the pipeline fails with an actionable error instructing the developer to run `mise run generate` locally and commit the result.
-
 ### 3.3. `security` (Secrets & Vulnerabilities)
 - **Gitleaks**: Scans commit history and working tree for leaked API keys, tokens, private certificates, or passwords.
 - **Govulncheck**: Official Go vulnerability scanner. Analyzes the call graph of the code against the National Vulnerability Database (NVD) and Go security database, reporting only genuinely reachable vulnerabilities.
@@ -79,16 +76,17 @@ graph TD
 ### 3.6. `architecture` (Hexagonal Architecture Boundary Enforcement)
 - **Goal**: Guarantee zero layer leakage and enforce Hexagonal Architecture dependency directions.
 - **Rules Enforced**:
-  - `internal/domain` only imports standard library packages and allowed primitives (`uuid`). Absolutely no imports of `usecase`, `adapter`, `config`, `gen`, HTTP frameworks, or database drivers.
-  - `internal/usecase` only imports `domain`. No imports of outer adapters (`httpapi`, `postgres`), `config`, or `cmd`.
-  - Driving (`httpapi`) and driven (`postgres`) adapters never cross-import each other.
+  - `internal/domain` only imports standard library packages and allowed primitives (`uuid`). Absolutely no imports of `usecase`, `adapter`, `config`, `gen`, or message broker/database drivers.
+  - `internal/usecase` only imports `domain`. No imports of outer adapters (`consumer`, `postgres`, `dlq`, `probe`), `config`, or `cmd`.
+  - Driving (`consumer`, `probe`) and driven (`postgres`, `dlq`) adapters never cross-import each other.
   - `internal/config` never imports `domain`, `usecase`, or `adapter`.
-### 3.7. `build-api` (Build, Scan & Supply Chain Security)
+
+### 3.7. `build-worker` (Build, Scan & Supply Chain Security)
 - **Stage 1: Multi-stage Docker Build**:
   - Builder image compiles the static binary with CGO disabled (`CGO_ENABLED=0`) and stripped debug tables (`-ldflags="-s -w"`).
   - Production image is created `FROM scratch` with only `/etc/ssl/certs/ca-certificates.crt`, non-root `/etc/passwd`, and the binary.
 - **Stage 2: Rootless Trivy Scan**:
-  - The image is exported directly to a tarball (`docker save ... -o /tmp/api-image.tar`).
+  - The image is exported directly to a tarball (`docker save ... -o /tmp/worker-image.tar`).
   - Trivy executes against the tarball file without mounting `/var/run/docker.sock`, preventing privilege escalation on the CI runner.
   - Fails the build if any `CRITICAL` or `HIGH` vulnerabilities are found.
 - **Stage 3: Conditional Push & Signing (Main/Tags only)**:
