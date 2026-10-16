@@ -51,4 +51,4 @@ formatters:
   settings:
     goimports:
       local-prefixes:
-        - github.com/netologist/go-service-template
+        - github.com/netologist/go-worker-template

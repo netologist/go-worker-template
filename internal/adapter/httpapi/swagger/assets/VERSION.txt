@@ -1,5 +1,0 @@
-swagger-ui-dist 5.33.1 (Apache-2.0)
-source: https://registry.npmjs.org/swagger-ui-dist/-/swagger-ui-dist-5.33.1.tgz
-sha1: f3d15dd89018797c10bf78df9e5d11c0ffe3df3d
-sha512: sha512-H872wWkA53bFIsGgi7OWgmq+CRWw3nFQGdJWRqOB9wNwTm6e5ol34+qPDkV4AJlK+gglM2EsJiOOzsGsEGbluA==
-Update by replacing the files in this directory with the same names from a newer release.

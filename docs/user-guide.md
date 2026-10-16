@@ -33,8 +33,8 @@ To run and develop this project, you only need two tools installed on your host 
 
 ```bash
 # 1. Clone repository and navigate to the project root
-git clone https://github.com/netologist/go-service-template.git
-cd go-service-template
+git clone https://github.com/netologist/go-worker-template.git
+cd go-worker-template
 
 # 2. Install Go runtime and hermetic toolchain via mise
 mise install
@@ -373,7 +373,7 @@ import (
 	"log"
 	"time"
 
-	"github.com/netologist/go-service-template/pkg/client"
+	"github.com/netologist/go-worker-template/pkg/client"
 )
 
 func main() {
@@ -474,7 +474,7 @@ mise run docker:build
 docker run --rm -p 8080:8080 \
   -e APP_ENV=production \
   -e DATABASE_URL="postgres://user:pass@host:5432/dbname?sslmode=require" \
-  go-service-template:latest
+  go-worker-template:latest
 ```
 
 ### Graceful Shutdown Lifecycle

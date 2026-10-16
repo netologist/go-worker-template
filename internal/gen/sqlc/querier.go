@@ -6,11 +6,19 @@ package sqlc
 
 import (
 	"context"
+
+	"github.com/google/uuid"
 )
 
 type Querier interface {
-	CreateItem(ctx context.Context, arg CreateItemParams) (Item, error)
-	ListItems(ctx context.Context) ([]Item, error)
+	CreateTask(ctx context.Context, arg CreateTaskParams) (Task, error)
+	FetchPendingTasksForUpdate(ctx context.Context, limit int32) ([]Task, error)
+	GetMessageStatus(ctx context.Context, messageID string) (ProcessedMessage, error)
+	GetTaskByID(ctx context.Context, id uuid.UUID) (Task, error)
+	MarkMessageCompleted(ctx context.Context, arg MarkMessageCompletedParams) error
+	MarkMessageFailed(ctx context.Context, messageID string) error
+	TryAcquireMessage(ctx context.Context, arg TryAcquireMessageParams) (ProcessedMessage, error)
+	UpdateTask(ctx context.Context, arg UpdateTaskParams) (Task, error)
 }
 
 var _ Querier = (*Queries)(nil)

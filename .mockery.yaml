@@ -1,6 +1,6 @@
 template: testify
 packages:
-  github.com/netologist/go-service-template/internal:
+  github.com/netologist/go-worker-template/internal:
     config:
       all: true
       recursive: true

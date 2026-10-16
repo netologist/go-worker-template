@@ -8,13 +8,23 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
-type Item struct {
+type ProcessedMessage struct {
+	MessageID     string
+	ConsumerGroup string
+	Status        string
+	ProcessedAt   time.Time
+}
+
+type Task struct {
 	ID          uuid.UUID
-	Name        string
-	Description string
-	Price       int64
+	Type        string
+	Payload     string
+	Status      string
+	Result      string
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
+	ProcessedAt pgtype.Timestamptz
 }

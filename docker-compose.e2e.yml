@@ -1,7 +1,7 @@
 services:
-  # Built locally from migration stage; decoupled from production API image.
+  # Built locally from migration stage; decoupled from production worker image.
   migration:
-    image: service-migration:local
+    image: worker-migration:local
     build:
       context: .
       dockerfile: Dockerfile
@@ -10,51 +10,51 @@ services:
     restart: "no"
     environment:
       GOOSE_DRIVER: postgres
-      GOOSE_DBSTRING: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${POSTGRES_DB:-service_db}?sslmode=disable
+      GOOSE_DBSTRING: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${POSTGRES_DB:-worker_db}?sslmode=disable
       GOOSE_MIGRATION_DIR: /database/migrations
     depends_on:
       postgres:
         condition: service_healthy
 
-  api:
-    image: ${REGISTRY:-ghcr.io}/${IMAGE_NAME:-netologist/go-service-template}:${IMAGE_TAG:-latest}
+  worker:
+    image: ${REGISTRY:-ghcr.io}/${IMAGE_NAME:-netologist/go-worker-template}:${IMAGE_TAG:-latest}
     build:
       context: .
       dockerfile: Dockerfile
     environment:
-      DATABASE_URL: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${POSTGRES_DB:-service_db}?sslmode=disable
+      DATABASE_URL: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${POSTGRES_DB:-worker_db}?sslmode=disable
+      PROBE_PORT: "8081"
+      BROKER_KIND: "postgres_outbox"
     ports:
-      - "8080:8080"
-      - "50051:50051"
+      - "8081:8081"
     depends_on:
       postgres:
         condition: service_healthy
       migration:
         condition: service_started
 
-  api-healthcheck:
+  worker-healthcheck:
     image: alpine/curl:3.14
     command: tail -f /dev/null
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "curl --fail http://api:8080/healthz || exit 1"]
+      test: ["CMD-SHELL", "curl --fail http://worker:8081/livez || exit 1"]
       interval: 2s
       retries: 15
       start_period: 2s
       timeout: 3s
     depends_on:
-      api:
+      worker:
         condition: service_started
 
   # Test runner is built locally only; never pulled from or pushed to a registry.
   e2e:
-    image: service-e2e:local
+    image: worker-e2e:local
     build:
       context: .
       dockerfile: Dockerfile.e2e
     environment:
-      BASE_URL: http://api:8080
-      GRPC_TARGET: api:50051
+      PROBE_URL: http://worker:8081
     depends_on:
-      api-healthcheck:
+      worker-healthcheck:
         condition: service_healthy

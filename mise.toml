@@ -1,19 +1,18 @@
 [tools]
 go = "1.27.2"
-buf = "1.50.0"
-grpcurl = "1.9.4"
+
 [env]
 _.file = ".env"
 POSTGRES_USER = "postgres"
 POSTGRES_PASSWORD = "S3cr3tP455w0rD"
-POSTGRES_DB = "service_db"
+POSTGRES_DB = "worker_db"
 DATABASE_URL = "postgres://{{ env.POSTGRES_USER }}:{{ env.POSTGRES_PASSWORD }}@localhost:5432/{{ env.POSTGRES_DB }}?sslmode=disable"
 GOOSE_DRIVER = "postgres"
 GOOSE_MIGRATION_DIR = "./database/migrations"
 GOOSE_DBSTRING = "{{ env.DATABASE_URL }}"
 
 [tasks."dev"]
-description = "Start PostgreSQL, run migrations, and run service server with live-reload (Air)"
+description = "Start PostgreSQL & RabbitMQ, run migrations, and run worker with live-reload (Air)"
 depends = ["docker:compose-up", "migrate:up"]
 run = "go tool air"
 
@@ -27,7 +26,7 @@ run = "go tool golangci-lint run --fix ./..."
 
 [tasks."format"]
 description = "Format Go code with goimports (grouped with module prefix)"
-run = "find . -type f -name '*.go' -not -name '*.gen.go' -not -path './vendor/*' -not -path './internal/gen/*' -not -path './pkg/proto/*' -exec go tool goimports -local github.com/netologist/go-service-template -w {} +"
+run = "find . -type f -name '*.go' -not -name '*.gen.go' -not -path './vendor/*' -not -path './internal/gen/*' -exec go tool goimports -local github.com/netologist/go-worker-template -w {} +"
 
 [tasks."secret:check"]
 description = "Run Gitleaks to detect secrets"
@@ -54,8 +53,8 @@ description = "Run architectural boundary tests"
 run = "go test -v ./tests/arch/..."
 
 [tasks."test"]
-description = "Run unit, client, and architectural tests with gotestsum"
-run = "go tool gotestsum --format testname -- -race ./internal/... ./pkg/... ./tests/arch/..."
+description = "Run unit, usecase, and architectural tests with gotestsum"
+run = "go tool gotestsum --format testname -- -race ./internal/... ./cmd/... ./tests/arch/..."
 
 [tasks."test:coverage"]
 description = "Run unit tests with race detection and show function-level coverage"
@@ -70,70 +69,24 @@ description = "Run mutation testing on domain layer using gremlins"
 run = "go tool gremlins unleash --timeout-coefficient 30 ./internal/domain"
 
 [tasks."test:e2e"]
-description = "Start PostgreSQL, apply migrations, run the server locally and execute the Ginkgo & Gomega E2E suite"
+description = "Start dependencies, apply migrations, run the worker locally and execute E2E probe suite"
 run = [
   { task = "docker:compose-up" },
   { task = "migrate:up" },
   '''
 BIN_DIR=$(mktemp -d)
-go build -o "$BIN_DIR/server" ./cmd/server
-"$BIN_DIR/server" &
-SERVER_PID=$!
-trap 'kill "$SERVER_PID" 2>/dev/null; rm -rf "$BIN_DIR"' EXIT
+go build -o "$BIN_DIR/worker" ./cmd/worker
+"$BIN_DIR/worker" &
+WORKER_PID=$!
+trap 'kill "$WORKER_PID" 2>/dev/null; rm -rf "$BIN_DIR"' EXIT
 go test -v -count=1 ./tests/e2e/...
   ''',
 ]
-
-[tasks."generate:oapi"]
-description = "Generate Go code from OpenAPI specification"
-run = "go tool oapi-codegen -config oapi-codegen.yml api/openapi.yaml"
-
-[tasks."generate:client"]
-description = "Generate Go HTTP client SDK from OpenAPI specification"
-run = "go tool oapi-codegen -config oapi-codegen-client.yml api/openapi.yaml"
-[tasks."generate:proto"]
-description = "Generate Go code from Protobuf specifications with Buf"
-run = "buf generate"
-
 
 [tasks."generate:sqlc"]
 description = "Generate Go code from SQL queries with sqlc"
 run = "go tool sqlc generate"
 
-[tasks."generate:goverter"]
-description = "Generate type-safe struct converters with goverter"
-run = "go tool goverter gen -output-constraint \"\" ./internal/adapter/..."
-
-[tasks."migrate:up"]
-description = "Apply database migrations with Goose"
-run = "go tool goose up"
-
-[tasks."migrate:down"]
-description = "Rollback the latest database migration"
-run = "go tool goose down"
-
-[tasks."migrate:status"]
-description = "View database migration status"
-run = "go tool goose status"
-
-[tasks."docker:build"]
-description = "Build scratch production container"
-run = "docker build --target production -t go-service-template:latest ."
-
-[tasks."docker:compose-up"]
-description = "Start local dependencies (PostgreSQL) using Docker Compose"
-run = "docker compose up -d --wait"
-
-[tasks."docker:compose-down"]
-description = "Stop and clean local dependencies using Docker Compose"
-run = "docker compose down -v"
-
-[tasks.psql]
-run = "docker compose exec postgres psql -U postgres -d service_db"
-
-[tasks."generate"]
-description = "Run all code generators (OpenAPI Server, Client, Protobuf, SQL queries, Mocks, Converters)"
-depends = ["generate:oapi", "generate:client", "generate:proto", "generate:sqlc", "generate:mocks", "generate:goverter"]
 [tasks."generate:mocks"]
 description = "Generate mocks with mockery"
 alias = "mocks:generate"
@@ -150,10 +103,36 @@ description = "Fail if generated mocks are out of date (for CI)"
 depends = ["generate:mocks"]
 run = "git diff --exit-code -- internal/gen/mocks"
 
-[tasks."goverter:check"]
-description = "Fail if generated converters are out of date (for CI)"
-depends = ["generate:goverter"]
-run = "git diff --exit-code -- '**/item_converter.gen.go'"
+[tasks."generate"]
+description = "Run all code generators (SQL queries, Mocks)"
+depends = ["generate:sqlc", "generate:mocks"]
+
+[tasks."migrate:up"]
+description = "Apply database migrations with Goose"
+run = "go tool goose up"
+
+[tasks."migrate:down"]
+description = "Rollback the latest database migration"
+run = "go tool goose down"
+
+[tasks."migrate:status"]
+description = "View database migration status"
+run = "go tool goose status"
+
+[tasks."docker:build"]
+description = "Build scratch production container"
+run = "docker build --target production -t go-worker-template:latest ."
+
+[tasks."docker:compose-up"]
+description = "Start local dependencies (PostgreSQL, RabbitMQ) using Docker Compose"
+run = "docker compose up -d --wait"
+
+[tasks."docker:compose-down"]
+description = "Stop and clean local dependencies using Docker Compose"
+run = "docker compose down -v"
+
+[tasks.psql]
+run = "docker compose exec postgres psql -U postgres -d worker_db"
 
 [tasks."template:init"]
 description = "Initialize project with a new module name (usage: mise run template:init <new-module-path>)"
@@ -163,10 +142,10 @@ NEW_MODULE="$1"
 if [ -z "$NEW_MODULE" ]; then
   echo "Error: Missing new module path."
   echo "Usage:   mise run template:init <new-module-path>"
-  echo "Example: mise run template:init github.com/my-org/my-service"
+  echo "Example: mise run template:init github.com/my-org/my-worker"
   exit 1
 fi
-OLD_MODULE="github.com/netologist/go-service-template"
+OLD_MODULE="github.com/netologist/go-worker-template"
 echo "Initializing template from $OLD_MODULE to $NEW_MODULE..."
 
 go mod edit -module "$NEW_MODULE"

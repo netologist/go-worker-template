@@ -15,7 +15,7 @@ Official Go project instantiation tool combined with our hermetic post-scaffoldi
 go install golang.org/x/tools/cmd/gonew@latest
 
 # 2. Scaffold new project directory
-gonew github.com/netologist/go-service-template github.com/your-org/your-service
+gonew github.com/netologist/go-worker-template github.com/your-org/your-service
 
 # 3. Enter project directory and install toolchain
 cd your-service
@@ -47,10 +47,10 @@ go mod edit -module github.com/your-org/your-service
 ```
 
 ### 2. Replace Import Paths in Codebase
-Search and replace all instances of `github.com/netologist/go-service-template` with your new module path:
+Search and replace all instances of `github.com/netologist/go-worker-template` with your new module path:
 ```bash
 # On macOS / Linux:
-find . -type f -name "*.go" -not -path "./vendor/*" -exec sed -i '' 's|github.com/netologist/go-service-template|github.com/your-org/your-service|g' {} +
+find . -type f -name "*.go" -not -path "./vendor/*" -exec sed -i '' 's|github.com/netologist/go-worker-template|github.com/your-org/your-service|g' {} +
 ```
 
 ### 3. Update `mise.toml`

@@ -1,4 +1,4 @@
-module github.com/netologist/go-service-template
+module github.com/netologist/go-worker-template
 
 go 1.27.2
 
@@ -23,21 +23,15 @@ tool (
 
 require (
 	github.com/caarlos0/env/v11 v11.4.1
-	github.com/getkin/kin-openapi v0.151.0
-	github.com/go-chi/chi/v5 v5.3.2
-	github.com/go-chi/cors v1.2.2
 	github.com/go-playground/validator/v10 v10.30.5
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.11.0
-	github.com/oapi-codegen/nethttp-middleware v1.1.2
-	github.com/oapi-codegen/runtime v1.7.0
 	github.com/onsi/ginkgo/v2 v2.32.1
 	github.com/onsi/gomega v1.42.1
+	github.com/rabbitmq/amqp091-go v1.15.0
 	github.com/stretchr/testify v1.12.1
 	golang.org/x/sync v0.23.0
 	golang.org/x/tools v0.51.0
-	google.golang.org/grpc v1.83.2
-	google.golang.org/protobuf v1.36.12
 )
 
 require (
@@ -89,7 +83,6 @@ require (
 	github.com/alingse/nilnesserr v0.2.0 // indirect
 	github.com/andybalholm/brotli v1.2.3 // indirect
 	github.com/antlr4-go/antlr/v4 v4.13.1 // indirect
-	github.com/apapsch/go-jsonmerge/v2 v2.0.0 // indirect
 	github.com/ashanbrown/forbidigo/v2 v2.3.1 // indirect
 	github.com/ashanbrown/makezero/v2 v2.2.1 // indirect
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect
@@ -160,6 +153,7 @@ require (
 	github.com/fullstorydev/grpcurl v1.9.4 // indirect
 	github.com/fzipp/gocyclo v0.6.0 // indirect
 	github.com/gabriel-vasile/mimetype v1.4.15 // indirect
+	github.com/getkin/kin-openapi v0.151.0 // indirect
 	github.com/ghostiam/protogetter v1.0.1 // indirect
 	github.com/gitleaks/go-gitdiff v0.9.1 // indirect
 	github.com/go-critic/go-critic v0.15.0 // indirect
@@ -217,7 +211,6 @@ require (
 	github.com/googleapis/enterprise-certificate-proxy v0.3.20 // indirect
 	github.com/googleapis/gax-go/v2 v2.24.0 // indirect
 	github.com/gordonklaus/ineffassign v0.2.0 // indirect
-	github.com/gorilla/mux v1.8.1 // indirect
 	github.com/gostaticanalysis/analysisutil v0.7.1 // indirect
 	github.com/gostaticanalysis/comment v1.5.0 // indirect
 	github.com/gostaticanalysis/forcetypeassert v0.2.0 // indirect
@@ -434,7 +427,9 @@ require (
 	google.golang.org/api v0.293.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20260715232425-e75dac1f907d // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260831171406-18b4a7587f8a // indirect
+	google.golang.org/grpc v1.83.2 // indirect
 	google.golang.org/grpc/cmd/protoc-gen-go-grpc v1.6.2 // indirect
+	google.golang.org/protobuf v1.36.12 // indirect
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	gotest.tools/gotestsum v1.13.0 // indirect

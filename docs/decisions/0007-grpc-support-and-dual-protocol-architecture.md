@@ -203,7 +203,7 @@ To prevent dependency bloat for external API consumers, the public SDK isolates 
 
 ```mermaid
 graph TD
-    subgraph RepoRoot ["github.com/netologist/go-service-template"]
+    subgraph RepoRoot ["github.com/netologist/go-worker-template"]
         subgraph PublicSDK ["pkg/client/ (Public Go SDK)"]
             RESTClient["pkg/client/client.gen.go<br/>NewClientWithResponses(baseURL, opts...)<br/>Dependencies: kin-openapi, net/http"]
             GRPCSubpkg["pkg/client/grpc/client.go<br/>NewItemClient(target, opts...)<br/>NewItemClientFromConn(cc)<br/>Dependencies: google.golang.org/grpc"]
@@ -220,8 +220,8 @@ graph TD
     GRPCSubpkg -.->|uses| ItemProto
 ```
 
-- **REST Clients**: Import `github.com/netologist/go-service-template/pkg/client` (zero gRPC imports).
-- **gRPC Clients**: Import `github.com/netologist/go-service-template/pkg/client/grpc` and `pkg/proto/item/v1`.
+- **REST Clients**: Import `github.com/netologist/go-worker-template/pkg/client` (zero gRPC imports).
+- **gRPC Clients**: Import `github.com/netologist/go-worker-template/pkg/client/grpc` and `pkg/proto/item/v1`.
 
 ---
 

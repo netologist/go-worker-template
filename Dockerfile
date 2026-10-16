@@ -14,11 +14,11 @@ RUN go mod download
 # Copy source code
 COPY . .
 
-# Build application server with -trimpath
+# Build application worker with -trimpath
 RUN CGO_ENABLED=0 GOOS=linux go build \
     -trimpath \
     -ldflags="-s -w" \
-    -o /bin/server ./cmd/server
+    -o /bin/worker ./cmd/worker
 
 # Build goose migration binary with -trimpath
 RUN CGO_ENABLED=0 GOOS=linux go build \
@@ -44,10 +44,10 @@ FROM scratch AS production
 
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 COPY --from=builder /tmp/passwd /tmp/group /etc/
-COPY --from=builder /bin/server /server
+COPY --from=builder /bin/worker /worker
 COPY --from=builder /bin/goose /bin/goose
 COPY database/migrations /database/migrations
 USER 10001:10001
-EXPOSE 8080 50051
+EXPOSE 8081
 
-ENTRYPOINT ["/server"]
+ENTRYPOINT ["/worker"]

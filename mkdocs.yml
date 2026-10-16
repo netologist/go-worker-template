@@ -1,8 +1,8 @@
 site_name: Go Service Template
 site_description: Production-grade Go Microservice Template with Hexagonal Architecture
 site_author: Netologist
-repo_name: netologist/go-service-template
-repo_url: https://github.com/netologist/go-service-template
+repo_name: netologist/go-worker-template
+repo_url: https://github.com/netologist/go-worker-template
 edit_uri: edit/main/docs/
 
 docs_dir: docs

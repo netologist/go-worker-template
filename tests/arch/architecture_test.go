@@ -11,7 +11,7 @@ import (
 	"golang.org/x/tools/go/packages"
 )
 
-const modulePrefix = "github.com/netologist/go-service-template"
+const modulePrefix = "github.com/netologist/go-worker-template"
 
 func getProjectRoot(t *testing.T) string {
 	t.Helper()
@@ -24,9 +24,7 @@ func getProjectRoot(t *testing.T) string {
 			return dir
 		}
 		parent := filepath.Dir(dir)
-		if parent == dir {
-			t.Fatalf("could not locate project root containing go.mod starting from %s", wd)
-		}
+		require.NotEqual(t, dir, parent, "could not find go.mod in parent directories")
 		dir = parent
 	}
 }
@@ -47,16 +45,14 @@ func loadInternalPackages(t *testing.T) map[string][]string {
 
 	result := make(map[string][]string)
 	for _, pkg := range pkgs {
-		// Skip generated packages
 		if strings.Contains(pkg.PkgPath, "/internal/gen") {
 			continue
 		}
-
-		imports := make([]string, 0, len(pkg.Imports))
-		for impPath := range pkg.Imports {
-			imports = append(imports, impPath)
+		var imps []string
+		for _, imp := range pkg.Imports {
+			imps = append(imps, imp.PkgPath)
 		}
-		result[pkg.PkgPath] = imports
+		result[pkg.PkgPath] = imps
 	}
 
 	return result
@@ -97,11 +93,11 @@ func TestArchitecture_DomainLayerPurity(t *testing.T) {
 			"internal/domain must not import generated code: %s", imp,
 		)
 
-		// Domain must never import transport or database drivers
+		// Domain must never import transport, broker SDKs, or database drivers
 		assert.False(
 			t,
-			strings.HasPrefix(imp, "net/http") || strings.Contains(imp, "chi"),
-			"internal/domain must not import HTTP transport packages: %s", imp,
+			strings.HasPrefix(imp, "net/http") || strings.Contains(imp, "amqp") || strings.Contains(imp, "kafka"),
+			"internal/domain must not import transport or broker SDKs: %s", imp,
 		)
 		assert.False(
 			t,
@@ -153,21 +149,15 @@ func TestArchitecture_UsecaseLayerIsolation(t *testing.T) {
 			"internal/usecase must not import cmd: %s", imp,
 		)
 
-		// Usecases must never import transport or database drivers
+		// Usecases must never import broker SDKs or database drivers directly
 		assert.False(
 			t,
-			strings.HasPrefix(imp, "net/http") || strings.Contains(imp, "chi"),
-			"internal/usecase must not import HTTP transport packages: %s", imp,
-		)
-		assert.False(
-			t,
-			strings.HasPrefix(imp, "database/sql") || strings.Contains(imp, "pgx"),
-			"internal/usecase must not import database drivers: %s", imp,
+			strings.Contains(imp, "amqp") || strings.Contains(imp, "kafka") || strings.Contains(imp, "pgx"),
+			"internal/usecase must not import broker or database drivers: %s", imp,
 		)
 	}
 }
 
-//nolint:funlen // adapter isolation covers all adapters
 func TestArchitecture_AdapterIsolation(t *testing.T) {
 	t.Parallel()
 	pkgs := loadInternalPackages(t)
@@ -179,81 +169,30 @@ func TestArchitecture_AdapterIsolation(t *testing.T) {
 	for _, imp := range postgresImports {
 		assert.False(
 			t,
-			strings.HasPrefix(imp, modulePrefix+"/internal/adapter/httpapi"),
-			"postgres adapter must not cross-import httpapi adapter: %s", imp,
+			strings.HasPrefix(imp, modulePrefix+"/internal/adapter/consumer"),
+			"postgres adapter must not cross-import consumer adapter: %s", imp,
 		)
 		assert.False(
 			t,
-			strings.HasPrefix(imp, modulePrefix+"/internal/adapter/grpc"),
-			"postgres adapter must not cross-import grpc adapter: %s", imp,
-		)
-	}
-
-	httpapiPath := modulePrefix + "/internal/adapter/httpapi"
-	httpapiImports, ok := pkgs[httpapiPath]
-	require.True(t, ok, "internal/adapter/httpapi must exist in loaded packages")
-
-	for _, imp := range httpapiImports {
-		assert.False(
-			t,
-			strings.HasPrefix(imp, modulePrefix+"/internal/adapter/postgres"),
-			"httpapi adapter must not cross-import postgres adapter: %s", imp,
-		)
-		assert.False(
-			t,
-			strings.HasPrefix(imp, modulePrefix+"/internal/adapter/grpc"),
-			"httpapi adapter must not cross-import grpc adapter: %s", imp,
+			strings.HasPrefix(imp, modulePrefix+"/internal/adapter/probe"),
+			"postgres adapter must not cross-import probe adapter: %s", imp,
 		)
 	}
 
-	handlerPath := modulePrefix + "/internal/adapter/httpapi/handler"
-	handlerImports, ok := pkgs[handlerPath]
-	require.True(t, ok, "internal/adapter/httpapi/handler must exist in loaded packages")
+	probePath := modulePrefix + "/internal/adapter/probe"
+	probeImports, ok := pkgs[probePath]
+	require.True(t, ok, "internal/adapter/probe must exist in loaded packages")
 
-	for _, imp := range handlerImports {
+	for _, imp := range probeImports {
 		assert.False(
 			t,
 			strings.HasPrefix(imp, modulePrefix+"/internal/adapter/postgres"),
-			"httpapi handler must not cross-import postgres adapter: %s", imp,
+			"probe adapter must not cross-import postgres adapter: %s", imp,
 		)
 		assert.False(
 			t,
-			strings.HasPrefix(imp, modulePrefix+"/internal/adapter/grpc"),
-			"httpapi handler must not cross-import grpc adapter: %s", imp,
-		)
-	}
-
-	grpcPath := modulePrefix + "/internal/adapter/grpc"
-	grpcImports, ok := pkgs[grpcPath]
-	require.True(t, ok, "internal/adapter/grpc must exist in loaded packages")
-
-	for _, imp := range grpcImports {
-		assert.False(
-			t,
-			strings.HasPrefix(imp, modulePrefix+"/internal/adapter/postgres"),
-			"grpc adapter must not cross-import postgres adapter: %s", imp,
-		)
-		assert.False(
-			t,
-			strings.HasPrefix(imp, modulePrefix+"/internal/adapter/httpapi"),
-			"grpc adapter must not cross-import httpapi adapter: %s", imp,
-		)
-	}
-
-	grpcHandlerPath := modulePrefix + "/internal/adapter/grpc/handler"
-	grpcHandlerImports, ok := pkgs[grpcHandlerPath]
-	require.True(t, ok, "internal/adapter/grpc/handler must exist in loaded packages")
-
-	for _, imp := range grpcHandlerImports {
-		assert.False(
-			t,
-			strings.HasPrefix(imp, modulePrefix+"/internal/adapter/postgres"),
-			"grpc handler must not cross-import postgres adapter: %s", imp,
-		)
-		assert.False(
-			t,
-			strings.HasPrefix(imp, modulePrefix+"/internal/adapter/httpapi"),
-			"grpc handler must not cross-import httpapi adapter: %s", imp,
+			strings.HasPrefix(imp, modulePrefix+"/internal/adapter/consumer"),
+			"probe adapter must not cross-import consumer adapter: %s", imp,
 		)
 	}
 }

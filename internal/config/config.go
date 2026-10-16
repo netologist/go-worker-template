@@ -5,37 +5,50 @@ import (
 	"time"
 
 	"github.com/caarlos0/env/v11"
+	"github.com/go-playground/validator/v10"
 )
 
 const (
 	environmentProduction = "production"
 
-	ServerModeAll  = "all"
-	ServerModeGRPC = "grpc"
-	ServerModeREST = "rest"
+	BrokerKindPostgresOutbox = "postgres_outbox"
+	BrokerKindRabbitMQ       = "rabbitmq"
 )
 
 type Config struct {
-	Environment string `env:"APP_ENV" envDefault:"development" validate:"required,oneof=development staging production test"` //nolint:lll // struct tags cannot be split across lines
-	ServerMode  string `env:"SERVER_MODE" envDefault:"all" validate:"required,oneof=all grpc rest"`
-	HTTPPort    int    `env:"HTTP_PORT" envDefault:"8080" validate:"required,min=1,max=65535"`
-	GRPCPort    int    `env:"GRPC_PORT" envDefault:"50051" validate:"required,min=1,max=65535"`
-	DatabaseURL string `env:"DATABASE_URL" validate:"required"`
+	Environment string `env:"APP_ENV" envDefault:"development" validate:"required,oneof=development staging production test"` //nolint:lll
 	LogLevel    string `env:"LOG_LEVEL" envDefault:"info" validate:"required,oneof=debug info warn error"`
 
-	// CORSAllowedOrigins lists the exact origins (scheme://host[:port]) allowed to call the API from a browser.
-	// Empty disables CORS entirely. Wildcards are rejected.
-	CORSAllowedOrigins []string `env:"CORS_ALLOWED_ORIGINS" envSeparator:"," validate:"dive,http_url,excludes=*"` //nolint:lll // struct tags cannot be split across lines
+	// Broker selection & consumer group
+	BrokerKind    string `env:"BROKER_KIND" envDefault:"postgres_outbox" validate:"required,oneof=postgres_outbox rabbitmq"` //nolint:lll
+	ConsumerGroup string `env:"CONSUMER_GROUP" envDefault:"default-worker-group" validate:"required"`
 
-	// HTTP Server settings (defaults from cmd/server/main.go)
-	ServerShutdownTimeout   time.Duration `env:"SERVER_SHUTDOWN_TIMEOUT" envDefault:"10s" validate:"required"`
-	ServerDrainTimeout      time.Duration `env:"SERVER_DRAIN_TIMEOUT" envDefault:"5s" validate:"min=0"`
-	ServerReadHeaderTimeout time.Duration `env:"SERVER_READ_HEADER_TIMEOUT" envDefault:"30s" validate:"required"`
-	ServerReadTimeout       time.Duration `env:"SERVER_READ_TIMEOUT" envDefault:"30s" validate:"required"`
-	ServerWriteTimeout      time.Duration `env:"SERVER_WRITE_TIMEOUT" envDefault:"30s" validate:"required"`
-	ServerIdleTimeout       time.Duration `env:"SERVER_IDLE_TIMEOUT" envDefault:"2m" validate:"required"`
+	// RabbitMQ settings
+	RabbitMQURL           string `env:"RABBITMQ_URL" envDefault:"amqp://guest:guest@localhost:5672/"`
+	RabbitMQQueue         string `env:"RABBITMQ_QUEUE" envDefault:"tasks_queue"`
+	RabbitMQPrefetchCount int    `env:"RABBITMQ_PREFETCH_COUNT" envDefault:"20" validate:"min=1"`
 
-	// PostgreSQL pool settings (defaults from internal/adapter/postgres/postgres.go)
+	// Worker concurrency & execution
+	WorkerConcurrency int           `env:"WORKER_CONCURRENCY" envDefault:"10" validate:"required,min=1"`
+	BatchSize         int32         `env:"BATCH_SIZE" envDefault:"10" validate:"required,min=1"`
+	PollInterval      time.Duration `env:"POLL_INTERVAL" envDefault:"1s" validate:"required"`
+	ProcessingTimeout time.Duration `env:"PROCESSING_TIMEOUT" envDefault:"30s" validate:"required"`
+
+	// Retry & DLQ
+	MaxRetries int    `env:"MAX_RETRIES" envDefault:"3" validate:"min=0"`
+	DLQQueue   string `env:"DLQ_QUEUE_NAME" envDefault:"tasks_dlq"`
+
+	// Idempotency
+	IdempotencyTTL time.Duration `env:"IDEMPOTENCY_TTL" envDefault:"168h" validate:"required"`
+
+	// Health/Metrics Probe Server
+	ProbePort int `env:"PROBE_PORT" envDefault:"8081" validate:"required,min=1,max=65535"`
+
+	// Lifecycle & Shutdown
+	ShutdownTimeout time.Duration `env:"SHUTDOWN_TIMEOUT" envDefault:"30s" validate:"required"`
+
+	// PostgreSQL settings
+	DatabaseURL         string        `env:"DATABASE_URL" validate:"required"`
 	DBMaxConns          int32         `env:"DB_MAX_CONNS" envDefault:"25" validate:"required,min=1"`
 	DBMinConns          int32         `env:"DB_MIN_CONNS" envDefault:"2" validate:"min=0"`
 	DBMaxConnLifetime   time.Duration `env:"DB_MAX_CONN_LIFETIME" envDefault:"30m" validate:"required"`
@@ -44,45 +57,27 @@ type Config struct {
 	DBPingTimeout       time.Duration `env:"DB_PING_TIMEOUT" envDefault:"5s" validate:"required"`
 }
 
-// ServerAddr returns the listening address formatted as ":<port>".
-func (c *Config) ServerAddr() string {
-	return fmt.Sprintf(":%d", c.HTTPPort)
+// ProbeAddr returns the probe listening address formatted as ":<port>".
+func (c *Config) ProbeAddr() string {
+	return fmt.Sprintf(":%d", c.ProbePort)
 }
 
-// GRPCAddr returns the gRPC listening address formatted as ":<port>".
-func (c *Config) GRPCAddr() string {
-	return fmt.Sprintf(":%d", c.GRPCPort)
+// IsProduction reports whether the environment is production.
+func (c *Config) IsProduction() bool {
+	return c.Environment == environmentProduction
 }
 
-// HTTPEnabled reports whether the HTTP/REST server should run.
-func (c *Config) HTTPEnabled() bool {
-	return c.ServerMode == ServerModeAll || c.ServerMode == ServerModeREST
-}
-
-// GRPCEnabled reports whether the gRPC server should run.
-func (c *Config) GRPCEnabled() bool {
-	return c.ServerMode == ServerModeAll || c.ServerMode == ServerModeGRPC
-}
-
-// DocsEnabled reports whether the Swagger UI and the OpenAPI document are served.
-// They are never exposed in production.
-func (c *Config) DocsEnabled() bool {
-	return c.Environment != environmentProduction
-}
-
-// Load populates configuration from the environment and validates struct constraints.
+// Load reads configuration from environment variables and validates all fields.
 func Load() (*Config, error) {
-	// bind to config
-	var cfg Config
-	if err := env.Parse(&cfg); err != nil {
-		return nil, fmt.Errorf("failed to process environment variables: %w", err)
+	cfg := &Config{}
+	if err := env.Parse(cfg); err != nil {
+		return nil, fmt.Errorf("failed to parse environment variables: %w", err)
 	}
 
-	// validate config
-	validate := NewValidation("env")
-	if err := validate.Struct(&cfg); err != nil {
-		return nil, fmt.Errorf("configuration validation failed: %w", err)
+	validate := validator.New()
+	if err := validate.Struct(cfg); err != nil {
+		return nil, fmt.Errorf("config validation failed: %w", err)
 	}
 
-	return &cfg, nil
+	return cfg, nil
 }

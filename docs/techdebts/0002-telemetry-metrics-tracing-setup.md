@@ -11,7 +11,7 @@
 
 ## 1. Problem ve Mevcut Durum
 
-Mevcut şablonda (`go-service-template`), temel yapılandırılmış loglama (`log/slog`) bulunmasına rağmen kurumsal bir mikrosistem için kritik olan şu gözlemlenebilirlik (observability) bileşenleri eksiktir:
+Mevcut şablonda (`go-worker-template`), temel yapılandırılmış loglama (`log/slog`) bulunmasına rağmen kurumsal bir mikrosistem için kritik olan şu gözlemlenebilirlik (observability) bileşenleri eksiktir:
 
 1. **Metrik Ucu Yokluğu (`/metrics`):** Uygulama çalışma zamanına (Go runtime: goroutines, heap, GC pauses), HTTP istek trafiğine (throughput, latency, error rates) ve DB havuz istatistiklerine (aktif/boşta bağlantılar, bekleme süreleri) dair Prometheus metrikleri üretilmemektedir.
 2. **Dağıtık İzleme (Distributed Tracing) Yokluğu:** İsteklerin servisler arası yolculuğunu uçtan uca takip edecek OTel Tracer altyapısı bulunmamaktadır; Jaeger veya Tempo gibi izleme arka uçlarına veri aktarılmamaktadır.
