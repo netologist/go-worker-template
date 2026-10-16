@@ -12,7 +12,7 @@ GOOSE_MIGRATION_DIR = "./database/migrations"
 GOOSE_DBSTRING = "{{ env.DATABASE_URL }}"
 
 [tasks."dev"]
-description = "Start PostgreSQL & RabbitMQ, run migrations, and run worker with live-reload (Air)"
+description = "Start PostgreSQL, RabbitMQ & Redpanda, run migrations, and run worker with live-reload (Air)"
 depends = ["docker:compose-up", "migrate:up"]
 run = "go tool air"
 
@@ -124,7 +124,7 @@ description = "Build scratch production container"
 run = "docker build --target production -t go-worker-template:latest ."
 
 [tasks."docker:compose-up"]
-description = "Start local dependencies (PostgreSQL, RabbitMQ) using Docker Compose"
+description = "Start local dependencies (PostgreSQL, RabbitMQ, Redpanda) using Docker Compose"
 run = "docker compose up -d --wait"
 
 [tasks."docker:compose-down"]

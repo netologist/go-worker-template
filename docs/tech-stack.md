@@ -15,6 +15,8 @@ This document outlines the technologies, libraries, and developer tools chosen f
 | **RPC Framework** | [gRPC](https://grpc.io/) | v1.83 | High-performance, binary RPC protocol with HTTP/2 transport |
 | **Protobuf Tooling** | [Buf CLI](https://buf.build/) | v1.50 | Hermetic Protobuf linter, breaking change detector & code generator |
 | **gRPC CLI Client** | [grpcurl](https://github.com/fullstorydev/grpcurl) | v1.9 | Command-line tool for interacting with and probing gRPC servers |
+| **Message Brokers** | [RabbitMQ](https://www.rabbitmq.com/) / [Redpanda](https://redpanda.com/) (Kafka) | Latest | Asynchronous message queues and event streaming |
+| **Kafka Client** | [franz-go](https://github.com/twmb/franz-go) | v1.22 | Pure Go, high-performance Kafka & Redpanda client (zero CGo) |
 | **Database Engine** | [PostgreSQL](https://www.postgresql.org/) | 16+ | Relational data persistence |
 | **Database Driver** | [pgx](https://github.com/jackc/pgx) | v5.11 | High-performance, pure Go PostgreSQL driver & pool |
 | **SQL Compiler** | [sqlc](https://sqlc.dev/) | v1.28 | Type-safe Go code generation directly from raw SQL |

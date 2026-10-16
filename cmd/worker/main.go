@@ -15,6 +15,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/netologist/go-worker-template/internal/adapter/consumer"
+	"github.com/netologist/go-worker-template/internal/adapter/consumer/kafka"
 	"github.com/netologist/go-worker-template/internal/adapter/consumer/outbox"
 	"github.com/netologist/go-worker-template/internal/adapter/consumer/rabbitmq"
 	"github.com/netologist/go-worker-template/internal/adapter/dlq"
@@ -72,7 +73,7 @@ func parseFlags(args []string, cfg *config.Config) error {
 	fs := flag.NewFlagSet("worker", flag.ContinueOnError)
 	var brokerKind string
 	var concurrency int
-	fs.StringVar(&brokerKind, "broker-kind", "", "Broker kind: postgres_outbox or rabbitmq")
+	fs.StringVar(&brokerKind, "broker-kind", "", "Broker kind: postgres_outbox, rabbitmq, kafka, or redpanda")
 	fs.IntVar(&concurrency, "concurrency", 0, "Worker concurrency goroutine count")
 
 	if err := fs.Parse(args); err != nil {
@@ -80,8 +81,11 @@ func parseFlags(args []string, cfg *config.Config) error {
 	}
 
 	if brokerKind != "" {
-		if brokerKind != config.BrokerKindPostgresOutbox && brokerKind != config.BrokerKindRabbitMQ {
-			return fmt.Errorf("invalid broker kind %q: must be postgres_outbox or rabbitmq", brokerKind)
+		if brokerKind != config.BrokerKindPostgresOutbox &&
+			brokerKind != config.BrokerKindRabbitMQ &&
+			brokerKind != config.BrokerKindKafka &&
+			brokerKind != config.BrokerKindRedpanda {
+			return fmt.Errorf("invalid broker kind %q: must be postgres_outbox, rabbitmq, kafka, or redpanda", brokerKind)
 		}
 		cfg.BrokerKind = brokerKind
 	}
@@ -224,6 +228,14 @@ func buildListener(pool *pgxpool.Pool, cfg *config.Config) (consumer.MessageList
 			Logger:        slog.Default(),
 		}), nil
 
+	case config.BrokerKindKafka, config.BrokerKindRedpanda:
+		return kafka.NewListener(kafka.Config{
+			Brokers:     cfg.KafkaBrokers,
+			Topics:      cfg.KafkaTopics,
+			Group:       cfg.ConsumerGroup,
+			Concurrency: cfg.WorkerConcurrency,
+			Logger:      slog.Default(),
+		})
 	case config.BrokerKindPostgresOutbox:
 		return outbox.NewListener(pool, outbox.Config{
 			Concurrency:  cfg.WorkerConcurrency,

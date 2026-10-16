@@ -195,6 +195,28 @@ func TestArchitecture_AdapterIsolation(t *testing.T) {
 			"probe adapter must not cross-import consumer adapter: %s", imp,
 		)
 	}
+
+	kafkaPath := modulePrefix + "/internal/adapter/consumer/kafka"
+	kafkaImports, ok := pkgs[kafkaPath]
+	require.True(t, ok, "internal/adapter/consumer/kafka must exist in loaded packages")
+
+	for _, imp := range kafkaImports {
+		assert.False(
+			t,
+			strings.HasPrefix(imp, modulePrefix+"/internal/adapter/postgres"),
+			"kafka consumer adapter must not cross-import postgres adapter: %s", imp,
+		)
+		assert.False(
+			t,
+			strings.HasPrefix(imp, modulePrefix+"/internal/adapter/probe"),
+			"kafka consumer adapter must not cross-import probe adapter: %s", imp,
+		)
+		assert.False(
+			t,
+			strings.HasPrefix(imp, modulePrefix+"/internal/usecase"),
+			"kafka consumer adapter must not depend on usecase layer: %s", imp,
+		)
+	}
 }
 
 func TestArchitecture_ConfigLayerIsolation(t *testing.T) {

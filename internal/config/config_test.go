@@ -28,6 +28,8 @@ func TestLoad_Defaults(t *testing.T) {
 	assert.Equal(t, ":8081", cfg.ProbeAddr())
 	assert.Equal(t, 30*time.Second, cfg.ShutdownTimeout)
 	assert.Equal(t, 168*time.Hour, cfg.IdempotencyTTL)
+	assert.Equal(t, []string{"localhost:9092"}, cfg.KafkaBrokers)
+	assert.Equal(t, []string{"tasks"}, cfg.KafkaTopics)
 	assert.False(t, cfg.IsProduction())
 }
 
@@ -51,6 +53,32 @@ func TestLoad_CustomEnv(t *testing.T) {
 	assert.Equal(t, 25, cfg.WorkerConcurrency)
 	assert.Equal(t, 9090, cfg.ProbePort)
 	assert.Equal(t, ":9090", cfg.ProbeAddr())
+}
+
+func TestLoad_KafkaAndRedpanda(t *testing.T) {
+	t.Run("broker kind kafka with custom brokers and topics", func(t *testing.T) {
+		t.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/db")
+		t.Setenv("BROKER_KIND", "kafka")
+		t.Setenv("KAFKA_BROKERS", "broker1:9092,broker2:9092")
+		t.Setenv("KAFKA_TOPICS", "events,notifications")
+
+		cfg, err := config.Load()
+		require.NoError(t, err)
+
+		assert.Equal(t, config.BrokerKindKafka, cfg.BrokerKind)
+		assert.Equal(t, []string{"broker1:9092", "broker2:9092"}, cfg.KafkaBrokers)
+		assert.Equal(t, []string{"events", "notifications"}, cfg.KafkaTopics)
+	})
+
+	t.Run("broker kind redpanda", func(t *testing.T) {
+		t.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/db")
+		t.Setenv("BROKER_KIND", "redpanda")
+
+		cfg, err := config.Load()
+		require.NoError(t, err)
+
+		assert.Equal(t, config.BrokerKindRedpanda, cfg.BrokerKind)
+	})
 }
 
 func TestLoad_ValidationErrors(t *testing.T) {

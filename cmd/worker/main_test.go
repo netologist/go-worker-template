@@ -32,6 +32,14 @@ func TestParseFlags(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, config.BrokerKindRabbitMQ, cfg.BrokerKind)
 		assert.Equal(t, 20, cfg.WorkerConcurrency)
+
+		err = parseFlags([]string{"--broker-kind=redpanda"}, cfg)
+		require.NoError(t, err)
+		assert.Equal(t, config.BrokerKindRedpanda, cfg.BrokerKind)
+
+		err = parseFlags([]string{"--broker-kind=kafka"}, cfg)
+		require.NoError(t, err)
+		assert.Equal(t, config.BrokerKindKafka, cfg.BrokerKind)
 	})
 
 	t.Run("invalid broker kind flag", func(t *testing.T) {

@@ -13,6 +13,8 @@ const (
 
 	BrokerKindPostgresOutbox = "postgres_outbox"
 	BrokerKindRabbitMQ       = "rabbitmq"
+	BrokerKindKafka          = "kafka"
+	BrokerKindRedpanda       = "redpanda"
 )
 
 type Config struct {
@@ -20,7 +22,7 @@ type Config struct {
 	LogLevel    string `env:"LOG_LEVEL" envDefault:"info" validate:"required,oneof=debug info warn error"`
 
 	// Broker selection & consumer group
-	BrokerKind    string `env:"BROKER_KIND" envDefault:"postgres_outbox" validate:"required,oneof=postgres_outbox rabbitmq"` //nolint:lll
+	BrokerKind    string `env:"BROKER_KIND" envDefault:"postgres_outbox" validate:"required,oneof=postgres_outbox rabbitmq kafka redpanda"` //nolint:lll
 	ConsumerGroup string `env:"CONSUMER_GROUP" envDefault:"default-worker-group" validate:"required"`
 
 	// RabbitMQ settings
@@ -28,6 +30,9 @@ type Config struct {
 	RabbitMQQueue         string `env:"RABBITMQ_QUEUE" envDefault:"tasks_queue"`
 	RabbitMQPrefetchCount int    `env:"RABBITMQ_PREFETCH_COUNT" envDefault:"20" validate:"min=1"`
 
+	// Kafka / Redpanda settings
+	KafkaBrokers []string `env:"KAFKA_BROKERS" envDefault:"localhost:9092" envSeparator:"," validate:"dive,required"`
+	KafkaTopics  []string `env:"KAFKA_TOPICS" envDefault:"tasks" envSeparator:"," validate:"dive,required"`
 	// Worker concurrency & execution
 	WorkerConcurrency int           `env:"WORKER_CONCURRENCY" envDefault:"10" validate:"required,min=1"`
 	BatchSize         int32         `env:"BATCH_SIZE" envDefault:"10" validate:"required,min=1"`
