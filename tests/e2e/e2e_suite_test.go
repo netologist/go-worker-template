@@ -9,12 +9,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
 
 var (
 	probeURL   string
+	dbURL      string
+	dbPool     *pgxpool.Pool
 	httpClient *http.Client
 )
 
@@ -65,8 +68,23 @@ var _ = BeforeSuite(func() {
 		probeURL,
 		startupTimeout,
 	)
+
+	dbURL = os.Getenv("DATABASE_URL")
+	if dbURL != "" {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		var poolErr error
+		dbPool, poolErr = pgxpool.New(ctx, dbURL)
+		Expect(poolErr).NotTo(HaveOccurred(), "failed to initialize postgres pool for E2E tests")
+
+		pingErr := dbPool.Ping(ctx)
+		Expect(pingErr).NotTo(HaveOccurred(), "failed to ping database at %s", dbURL)
+	}
 })
 
 var _ = AfterSuite(func() {
-	// Teardown if any
+	if dbPool != nil {
+		dbPool.Close()
+	}
 })
